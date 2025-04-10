@@ -502,10 +502,15 @@ class ScreenCaptureService : Service() {
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
+        // 为Android 11及以上版本注册回调
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            mediaProjection?.registerCallback(mediaProjectionCallback!!, handler)
+        }
+
         // 设置ImageReader
         imageReader = ImageReader.newInstance(
             displayMetrics.widthPixels,
-            displayMetrics.heightPixels + getStatusBarHeight() + getNavigationBarHeight(),
+            displayMetrics.heightPixels,
             PixelFormat.RGBA_8888,
             2
         ).apply {
@@ -517,7 +522,7 @@ class ScreenCaptureService : Service() {
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
             displayMetrics.widthPixels,
-            displayMetrics.heightPixels + getStatusBarHeight() + getNavigationBarHeight(),
+            displayMetrics.heightPixels,
             displayMetrics.densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface,
@@ -525,6 +530,24 @@ class ScreenCaptureService : Service() {
             null
         )
     }
+
+    // MediaProjection回调
+    private val mediaProjectionCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        object : MediaProjection.Callback() {
+            override fun onStop() {
+                Log.d(TAG, "MediaProjection已停止")
+                stopSelf()
+            }
+
+            override fun onCapturedContentResize(width: Int, height: Int) {
+                Log.d(TAG, "屏幕尺寸已更改: $width x $height")
+            }
+
+            override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+                Log.d(TAG, "内容可见性已更改: $isVisible")
+            }
+        }
+    } else null
 
     private fun startCapturing() {
         isRunning.set(true)
@@ -933,6 +956,11 @@ class ScreenCaptureService : Service() {
         // 移除悬浮窗
         windowManager?.removeView(floatingView)
         windowManager?.removeView(crosshairView)
+
+        // 如果在Android 11及以上版本注册了回调，在销毁时注销
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            mediaProjection?.unregisterCallback(mediaProjectionCallback!!)
+        }
 
         // 释放资源
         virtualDisplay?.release()
