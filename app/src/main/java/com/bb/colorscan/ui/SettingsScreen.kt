@@ -1,0 +1,347 @@
+package com.bb.colorscan.ui
+
+import android.content.Context
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import com.bb.colorscan.MainActivity
+import com.bb.colorscan.viewmodel.SettingsViewModel
+
+/**
+ * 设置屏幕UI组件
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    viewModel: SettingsViewModel
+) {
+    val monitorAudioPath by viewModel.monitorAudioPath.collectAsState()
+    val countdownAudioPath by viewModel.countdownAudioPath.collectAsState()
+    val countdownDuration by viewModel.countdownDuration.collectAsState()
+    val targetRGB by viewModel.targetRgb.collectAsState()
+    val isRecording by viewModel.isRecording.collectAsState()
+    
+    val context = LocalContext.current
+    
+    // 文件选择器 - 监控音频
+    val monitorAudioLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            viewModel.updateMonitorAudioPath(it)
+            Toast.makeText(context, "已选择音频文件", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    // 文件选择器 - 倒计时音频
+    val countdownAudioLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            viewModel.updateCountdownAudioPath(it)
+            Toast.makeText(context, "已选择音频文件", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("颜色扫描设置") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // 录屏开关
+            RecordingToggleCard(
+                isRecording = isRecording,
+                onToggleRecording = { shouldRecord -> 
+                    if (shouldRecord) {
+                        // 通过Activity启动录屏
+                        (context as? MainActivity)?.checkPermissionAndStartCapture()
+                    } else {
+                        // 通过ViewModel直接停止服务
+                        viewModel.stopScreenCapture()
+                    }
+                }
+            )
+            
+            // 设置项标题
+            Text(
+                text = "监控设置",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            
+            // RGB颜色设置
+            CompactSettingItem(
+                title = "监控颜色RGB",
+                value = targetRGB,
+                onValueChange = { viewModel.updateTargetRgb(it) },
+                label = "RGB值 (例如: 255, 0, 0)",
+                onSave = { 
+                    viewModel.saveTargetRgbSettings()
+                    Toast.makeText(context, "监控颜色已保存", Toast.LENGTH_SHORT).show()
+                }
+            )
+            
+            // 监控音频设置
+            AudioSettingItem(
+                title = "监控提示音频",
+                value = monitorAudioPath,
+                onValueChange = { viewModel.updateMonitorAudioPath(it) },
+                label = "音频文件路径",
+                onBrowse = { monitorAudioLauncher.launch("audio/*") },
+                onSave = { 
+                    viewModel.saveMonitorAudioSettings()
+                    Toast.makeText(context, "监控提示音频已保存", Toast.LENGTH_SHORT).show()
+                }
+            )
+            
+            // 倒计时设置标题
+            Text(
+                text = "倒计时设置",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            
+            // 倒计时时长设置
+            CompactSettingItem(
+                title = "倒计时时长",
+                value = countdownDuration,
+                onValueChange = { viewModel.updateCountdownDuration(it) },
+                label = "秒数",
+                onSave = { 
+                    viewModel.saveCountdownDurationSettings()
+                    Toast.makeText(context, "倒计时时长已保存", Toast.LENGTH_SHORT).show()
+                }
+            )
+            
+            // 倒计时音频设置
+            AudioSettingItem(
+                title = "倒计时提示音频",
+                value = countdownAudioPath,
+                onValueChange = { viewModel.updateCountdownAudioPath(it) },
+                label = "音频文件路径",
+                onBrowse = { countdownAudioLauncher.launch("audio/*") },
+                onSave = { 
+                    viewModel.saveCountdownAudioSettings()
+                    Toast.makeText(context, "倒计时提示音频已保存", Toast.LENGTH_SHORT).show()
+                }
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+fun RecordingToggleCard(
+    isRecording: Boolean,
+    onToggleRecording: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isRecording) 
+                MaterialTheme.colorScheme.primaryContainer 
+            else 
+                MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 2.dp
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "屏幕颜色监控",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (isRecording) 
+                        MaterialTheme.colorScheme.onPrimaryContainer 
+                    else 
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (isRecording) "正在监控中" else "点击开关开始监控",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (isRecording) 
+                        MaterialTheme.colorScheme.onPrimaryContainer 
+                    else 
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+            Switch(
+                checked = isRecording,
+                onCheckedChange = onToggleRecording,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = MaterialTheme.colorScheme.primary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary
+                )
+            )
+        }
+    }
+}
+
+@Composable
+fun CompactSettingItem(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    onSave: () -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 1.dp
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // 标题和保存按钮在同一行
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                FilledTonalButton(
+                    onClick = onSave,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("保存", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            
+            // 输入框
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                label = { Text(label, style = MaterialTheme.typography.bodySmall) },
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = MaterialTheme.typography.bodyMedium,
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                )
+            )
+        }
+    }
+}
+
+@Composable
+fun AudioSettingItem(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    onBrowse: () -> Unit,
+    onSave: () -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 1.dp
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // 标题和保存按钮在同一行
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                FilledTonalButton(
+                    onClick = onSave,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text("保存", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            
+            // 输入框和浏览按钮
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    label = { Text(label, style = MaterialTheme.typography.bodySmall) },
+                    modifier = Modifier.weight(1f),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                    )
+                )
+                
+                // 浏览按钮
+                FilledIconButton(
+                    onClick = onBrowse,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AudioFile,
+                        contentDescription = "选择音频文件"
+                    )
+                }
+            }
+        }
+    }
+} 
