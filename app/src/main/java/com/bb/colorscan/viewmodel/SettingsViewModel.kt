@@ -30,7 +30,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _monitorAudioPath = MutableStateFlow("")
     private val _countdownAudioPath = MutableStateFlow("")
     private val _countdownDuration = MutableStateFlow("5")
-    private val _targetRgb = MutableStateFlow("255,0,0")
+    private val _targetRgb = MutableStateFlow("13,22,33")
     private val _isRecording = MutableStateFlow(false)
     
     // 公开的状态

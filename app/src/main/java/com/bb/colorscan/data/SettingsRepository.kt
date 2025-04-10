@@ -19,7 +19,7 @@ class SettingsRepository(context: Context) {
         
         // 默认值
         private const val DEFAULT_COUNTDOWN_DURATION = "5"
-        private const val DEFAULT_RGB = "255,0,0"
+        private const val DEFAULT_RGB = "13,22,33"
     }
     
     private val sharedPrefs: SharedPreferences = 

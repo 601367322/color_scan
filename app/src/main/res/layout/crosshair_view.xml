@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@android:color/transparent">
+
+    <!-- 准星图像 -->
+    <ImageView
+        android:id="@+id/crosshairImage"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@drawable/crosshair"
+        android:contentDescription="准星" />
+    
+    <!-- 拖拽手柄区域 -->
+    <LinearLayout
+        android:id="@+id/crosshairDragHandle"
+        android:layout_width="48dp"
+        android:layout_height="18dp"
+        android:background="#40FF0000"
+        android:gravity="center">
+        
+        <ImageView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:src="@drawable/ic_drag_handle"
+            android:contentDescription="准星拖拽手柄"
+            android:tint="#FF0000" />
+    </LinearLayout>
+
+</LinearLayout> 

@@ -18,6 +18,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.bb.colorscan.MainActivity
 import com.bb.colorscan.viewmodel.SettingsViewModel
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.text.SimpleDateFormat
+import java.util.*
 
 /**
  * 设置屏幕UI组件
@@ -41,9 +47,15 @@ fun SettingsScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            viewModel.updateMonitorAudioPath(it)
-            viewModel.saveMonitorAudioSettings() // 自动保存
-            Toast.makeText(context, "已选择并保存音频文件", Toast.LENGTH_SHORT).show()
+            // 将音频文件复制到应用私有目录
+            val localPath = copyAudioFileToLocal(context, it, "monitor_audio")
+            if (localPath != null) {
+                viewModel.updateMonitorAudioPath(localPath)
+                viewModel.saveMonitorAudioSettings() // 自动保存
+                Toast.makeText(context, "已选择并保存音频文件", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "保存音频文件失败", Toast.LENGTH_SHORT).show()
+            }
         }
     }
     
@@ -52,9 +64,15 @@ fun SettingsScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            viewModel.updateCountdownAudioPath(it)
-            viewModel.saveCountdownAudioSettings() // 自动保存
-            Toast.makeText(context, "已选择并保存音频文件", Toast.LENGTH_SHORT).show()
+            // 将音频文件复制到应用私有目录
+            val localPath = copyAudioFileToLocal(context, it, "countdown_audio")
+            if (localPath != null) {
+                viewModel.updateCountdownAudioPath(localPath)
+                viewModel.saveCountdownAudioSettings() // 自动保存
+                Toast.makeText(context, "已选择并保存音频文件", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "保存音频文件失败", Toast.LENGTH_SHORT).show()
+            }
         }
     }
     
@@ -339,5 +357,55 @@ fun AudioSettingItemAutoSave(
                 }
             }
         }
+    }
+}
+
+/**
+ * 将音频文件从Uri复制到应用私有目录
+ * @param context 上下文
+ * @param uri 音频文件的Uri
+ * @param prefix 文件名前缀
+ * @return 本地文件路径，如果失败则返回null
+ */
+private fun copyAudioFileToLocal(context: Context, uri: Uri, prefix: String): String? {
+    try {
+        // 创建应用私有目录中的audio文件夹
+        val audioDir = File(context.filesDir, "audio")
+        if (!audioDir.exists()) {
+            audioDir.mkdirs()
+        }
+        
+        // 生成唯一的文件名
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val extension = getFileExtensionFromUri(context, uri)
+        val fileName = "${prefix}_${timestamp}.${extension}"
+        val localFile = File(audioDir, fileName)
+        
+        // 复制文件
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            FileOutputStream(localFile).use { outputStream ->
+                inputStream.copyTo(outputStream)
+            }
+        }
+        
+        // 返回本地文件路径
+        return localFile.absolutePath
+    } catch (e: Exception) {
+        e.printStackTrace()
+        return null
+    }
+}
+
+/**
+ * 从Uri获取文件扩展名
+ */
+private fun getFileExtensionFromUri(context: Context, uri: Uri): String {
+    val mimeType = context.contentResolver.getType(uri)
+    return when (mimeType) {
+        "audio/mpeg" -> "mp3"
+        "audio/wav" -> "wav"
+        "audio/ogg" -> "ogg"
+        "audio/aac" -> "aac"
+        else -> "mp3" // 默认扩展名
     }
 } 

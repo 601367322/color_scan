@@ -4,6 +4,9 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -19,12 +22,18 @@ import android.view.*
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.bb.colorscan.MainActivity
 import com.bb.colorscan.R
 import com.bb.colorscan.data.SettingsRepository
+import java.io.File
+import java.io.FileOutputStream
 import java.lang.ref.WeakReference
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
@@ -49,7 +58,7 @@ class ScreenCaptureService : Service() {
         private const val DEFAULT_CAPTURE_INTERVAL = 500L
 
         // 颜色匹配容差
-        private const val COLOR_TOLERANCE = 20
+        private const val COLOR_TOLERANCE = 5
     }
 
     private val handlerThread: HandlerThread by lazy {
@@ -71,6 +80,9 @@ class ScreenCaptureService : Service() {
     private var targetRgb: Triple<Int, Int, Int>? = null
     private lateinit var settingsRepository: SettingsRepository
 
+    // 保存实际可用高度（减去状态栏和导航栏）
+    private var screenHeight: Int = 0
+
     // 图像分析开关状态
     private val isAnalysisEnabled = AtomicBoolean(true)
 
@@ -81,12 +93,21 @@ class ScreenCaptureService : Service() {
     private var countdownRunning = AtomicBoolean(false)
     private var mediaPlayer: MediaPlayer? = null
 
+    // 监控音频播放状态
+    private val isMonitorAudioPlaying = AtomicBoolean(false)
+    private var monitorMediaPlayer: MediaPlayer? = null
+
     // 悬浮窗相关
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
     private var countdownTextView: TextView? = null
     private var analysisButton: ImageButton? = null
     private var countdownButton: ImageButton? = null
+
+    // 十字准星相关
+    private var crosshairView: View? = null
+    private var crosshairX: Int = 0
+    private var crosshairY: Int = 0
 
     // 图像可用监听器
     private val imageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
@@ -132,12 +153,16 @@ class ScreenCaptureService : Service() {
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         windowManager.defaultDisplay.getMetrics(displayMetrics)
 
+        // 计算实际可用高度
+        screenHeight = getActualScreenHeight()
+
         // 初始化设置仓库
         settingsRepository = SettingsRepository(applicationContext)
 
         // 初始化悬浮窗
         this.windowManager = windowManager
         initFloatingWindow()
+        initCrosshairWindow()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -259,7 +284,11 @@ class ScreenCaptureService : Service() {
      * 设置拖动处理
      */
     private fun setupDragHandler() {
-        floatingView?.setOnTouchListener(object : View.OnTouchListener {
+        // 获取拖拽区域控件
+        val dragHandle = floatingView?.findViewById<View>(R.id.dragHandle)
+
+        // 只为拖拽区域设置触摸监听器
+        dragHandle?.setOnTouchListener(object : View.OnTouchListener {
             private var initialX: Int = 0
             private var initialY: Int = 0
             private var initialTouchX: Float = 0f
@@ -285,10 +314,64 @@ class ScreenCaptureService : Service() {
                         windowManager?.updateViewLayout(floatingView, params)
                         return true
                     }
+
+                    MotionEvent.ACTION_UP -> {
+                        // 检测是否靠近屏幕边缘，如果是则自动贴边
+                        snapToEdgeIfNeeded(floatingView)
+                        return true
+                    }
                 }
                 return false
             }
         })
+    }
+
+    /**
+     * 检测是否靠近屏幕边缘，如果是则自动贴边
+     */
+    private fun snapToEdgeIfNeeded(view: View?) {
+        if (view == null || windowManager == null) return
+
+        val params = view.layoutParams as WindowManager.LayoutParams
+
+        // 计算屏幕宽度和高度
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+
+        // 获取悬浮窗宽高
+        val width = view.width
+        val height = view.height
+
+        // 贴边吸附的阈值（距离边缘多少像素会自动吸附）
+        val snapThreshold = 40
+
+        // 水平方向贴边
+        if (params.x < snapThreshold) {
+            // 贴左边
+            params.x = 0
+        } else if (screenWidth - (params.x + width) < snapThreshold) {
+            // 贴右边
+            params.x = screenWidth - width
+        }
+
+        // 垂直方向贴边
+        if (params.y < snapThreshold) {
+            // 贴顶部
+            params.y = 0
+        } else if (screenHeight - (params.y + height) < snapThreshold) {
+            // 贴底部
+            params.y = screenHeight - height
+        }
+
+        Log.d(TAG, "Snap to edge: ${params.x}, ${params.y}")
+        Log.d(TAG, "Snap to edge: ${params.x + width}, ${params.y}")
+
+        // 更新准星中心点坐标 (准星图像的中心点)
+        crosshairX = params.x + 24  // 加上准星宽度的一半
+        crosshairY = params.y + 24  // 加上准星高度的一半
+
+        // 更新位置
+        windowManager?.updateViewLayout(view, params)
     }
 
     /**
@@ -309,7 +392,7 @@ class ScreenCaptureService : Service() {
         updateCountdownButtonAppearance(true)
 
         // 创建倒计时任务
-        countdownTask = scheduledExecutor.scheduleAtFixedRate({
+        countdownTask = scheduledExecutor.scheduleWithFixedDelay({
             countdownSeconds--
 
             // 更新UI需要在主线程执行
@@ -344,20 +427,54 @@ class ScreenCaptureService : Service() {
      * 播放音频
      */
     private fun playAudio() {
-        // 获取音频文件URI
-        val audioUriString = settingsRepository.getCountdownAudioPath()
-        if (audioUriString.isBlank()) return
+        // 获取音频文件路径
+        val audioPath = settingsRepository.getCountdownAudioPath()
+        if (audioPath.isBlank()) return
 
         try {
             // 创建媒体播放器
             mediaPlayer = MediaPlayer().apply {
-                setDataSource(applicationContext, Uri.parse(audioUriString))
-                setOnPreparedListener { it.start() }
-                setOnCompletionListener { it.release() }
-                prepareAsync()
+                try {
+                    // 检查是否是本地文件路径
+                    if (audioPath.startsWith("content://")) {
+                        // 处理content URI
+                        setDataSource(applicationContext, Uri.parse(audioPath))
+                    } else {
+                        // 处理本地文件路径
+                        setDataSource(audioPath)
+                    }
+
+                    // 设置监听器
+                    setOnPreparedListener {
+                        try {
+                            start()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error starting countdown audio", e)
+                            mediaPlayer = null
+                        }
+                    }
+
+                    setOnCompletionListener {
+                        it.release()
+                        mediaPlayer = null
+                    }
+
+                    setOnErrorListener { _, _, _ ->
+                        Log.e(TAG, "Error playing countdown audio")
+                        mediaPlayer = null
+                        true
+                    }
+
+                    // 异步准备
+                    prepareAsync()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error setting up countdown audio", e)
+                    mediaPlayer = null
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error playing audio", e)
+            Log.e(TAG, "Error creating countdown audio player", e)
+            mediaPlayer = null
         }
     }
 
@@ -376,7 +493,7 @@ class ScreenCaptureService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing RGB: $rgbString", e)
-            targetRgb = Triple(255, 0, 0) // 默认红色
+            targetRgb = Triple(13, 22, 33) // 默认红色
         }
     }
 
@@ -388,7 +505,7 @@ class ScreenCaptureService : Service() {
         // 设置ImageReader
         imageReader = ImageReader.newInstance(
             displayMetrics.widthPixels,
-            displayMetrics.heightPixels,
+            displayMetrics.heightPixels + getStatusBarHeight() + getNavigationBarHeight(),
             PixelFormat.RGBA_8888,
             2
         ).apply {
@@ -400,7 +517,7 @@ class ScreenCaptureService : Service() {
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
             displayMetrics.widthPixels,
-            displayMetrics.heightPixels,
+            displayMetrics.heightPixels + getStatusBarHeight() + getNavigationBarHeight(),
             displayMetrics.densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface,
@@ -415,45 +532,111 @@ class ScreenCaptureService : Service() {
     }
 
     private fun analyzeImage(bitmap: Bitmap) {
-        // 在这里可以实现颜色分析逻辑
+        // 在这里实现颜色分析逻辑
         targetRgb?.let { (r, g, b) ->
-            // 简单示例: 扫描图像中心区域查找目标颜色
-            val centerX = bitmap.width / 2
-            val centerY = bitmap.height / 2
-            val scanRadius = 100
+            try {
+                // 使用准星中心点的位置获取像素颜色
+                // 注意：由于图像可能与屏幕大小不完全一致，需要进行比例转换
+                val scaleX = bitmap.width.toFloat() / displayMetrics.widthPixels
+                val scaleY = bitmap.height.toFloat() / displayMetrics.heightPixels
 
-            var found = false
+                // 计算移动距离并更新位置
+                val params = crosshairView?.layoutParams as WindowManager.LayoutParams
 
-            // 扫描中心区域
-            for (x in centerX - scanRadius until centerX + scanRadius) {
-                if (x < 0 || x >= bitmap.width) continue
+                crosshairX = params.x + crosshairView!!.width / 2  // 加上准星宽度的一半
+                crosshairY = params.y + crosshairView!!.width / 2  // 加上准星高度的一半
 
-                for (y in centerY - scanRadius until centerY + scanRadius) {
-                    if (y < 0 || y >= bitmap.height) continue
+                // 计算准星在图像中的位置
+                val bitmapX = crosshairX
+                val bitmapY = crosshairY + getStatusBarHeight()
 
-                    val pixel = bitmap.getPixel(x, y)
-                    val pixelR = (pixel shr 16) and 0xff
-                    val pixelG = (pixel shr 8) and 0xff
-                    val pixelB = pixel and 0xff
 
-                    // 容差匹配，允许一定程度的颜色偏差
-                    if (Math.abs(pixelR - r) < COLOR_TOLERANCE &&
-                        Math.abs(pixelG - g) < COLOR_TOLERANCE &&
-                        Math.abs(pixelB - b) < COLOR_TOLERANCE
-                    ) {
-                        found = true
-                        Log.d(TAG, "Found target color at ($x, $y): RGB($pixelR, $pixelG, $pixelB)")
-                        // 发送目标颜色被找到的广播
-                        sendColorFoundBroadcast(x, y)
-
-                        // 播放监控音频
-                        playMonitorAudio()
-
-                        break
-                    }
+                // 测试，在bitmapX、bitmapY的位置绘制一个绿色的点
+                val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+                val canvas = Canvas(mutableBitmap)
+                val paint = Paint().apply {
+                    color = Color.GREEN
+                    style = Paint.Style.FILL
                 }
 
-                if (found) break
+                // 绘制绿色点，半径为5像素
+                canvas.drawCircle(bitmapX.toFloat(), bitmapY.toFloat(), 5f, paint)
+
+                // 可选：保存修改后的图像用于调试
+                saveImageForDebug(mutableBitmap)
+
+
+                // 获取像素颜色
+                val pixel = bitmap.getPixel(bitmapX, bitmapY)
+                val pixelR = (pixel shr 16) and 0xff
+                val pixelG = (pixel shr 8) and 0xff
+                val pixelB = pixel and 0xff
+
+                Log.d(
+                    TAG,
+                    "Analyzing color at crosshair ($bitmapX, $bitmapY): RGB($pixelR, $pixelG, $pixelB), bitmap (${bitmap.width},${bitmap.height})"
+                )
+
+                // 容差匹配，允许一定程度的颜色偏差
+                if (Math.abs(pixelR - r) < COLOR_TOLERANCE &&
+                    Math.abs(pixelG - g) < COLOR_TOLERANCE &&
+                    Math.abs(pixelB - b) < COLOR_TOLERANCE
+                ) {
+
+                    Log.d(TAG, "Found target color at crosshair: RGB($pixelR, $pixelG, $pixelB)")
+
+                    // 如果倒计时音频正在播放，则停止它
+                    stopCountdownAudio()
+
+                    // 播放监控音频
+                    playMonitorAudio()
+                } else {
+                    // 颜色不匹配，停止播放音频
+                    stopMonitorAudio()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error analyzing pixel at crosshair", e)
+            }
+        }
+    }
+
+    /**
+     * 保存图像到外部存储用于调试
+     */
+    private fun saveImageForDebug(bitmap: Bitmap) {
+        try {
+            // 获取应用外部缓存目录
+            val dir = applicationContext.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+            if (dir != null && !dir.exists()) {
+                dir.mkdirs()
+            }
+
+            // 创建带时间戳的文件名
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val fileName = "DEBUG_${timeStamp}.jpg"
+            val file = File(dir, fileName)
+
+            // 将位图保存为JPEG
+            FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            }
+
+            Log.d(TAG, "调试图像已保存: ${file.absolutePath}")
+        } catch (e: Exception) {
+            Log.e(TAG, "保存调试图像失败", e)
+        }
+    }
+
+    /**
+     * 停止倒计时音频播放
+     */
+    private fun stopCountdownAudio() {
+        mediaPlayer?.let { player ->
+            if (player.isPlaying) {
+                Log.d(TAG, "颜色匹配，停止倒计时音频")
+                player.stop()
+                player.release()
+                mediaPlayer = null
             }
         }
     }
@@ -462,28 +645,246 @@ class ScreenCaptureService : Service() {
      * 播放监控音频
      */
     private fun playMonitorAudio() {
-        // 获取音频文件URI
-        val audioUriString = settingsRepository.getMonitorAudioPath()
-        if (audioUriString.isBlank()) return
+        // 如果音频正在播放，则跳过
+        if (isMonitorAudioPlaying.get()) {
+            Log.d(TAG, "监控音频正在播放，跳过新的播放请求")
+            return
+        }
+
+        // 获取音频文件路径
+        val audioPath = settingsRepository.getMonitorAudioPath()
+        if (audioPath.isBlank()) return
 
         try {
+            // 设置播放状态为true
+            isMonitorAudioPlaying.set(true)
+
             // 创建媒体播放器
-            val player = MediaPlayer().apply {
-                setDataSource(applicationContext, Uri.parse(audioUriString))
-                setOnPreparedListener { it.start() }
-                setOnCompletionListener { it.release() }
-                prepareAsync()
+            monitorMediaPlayer = MediaPlayer().apply {
+                try {
+                    // 检查是否是本地文件路径
+                    if (audioPath.startsWith("content://")) {
+                        // 处理content URI
+                        setDataSource(applicationContext, Uri.parse(audioPath))
+                    } else {
+                        // 处理本地文件路径
+                        setDataSource(audioPath)
+                    }
+
+                    // 设置监听器
+                    setOnPreparedListener {
+                        try {
+                            if (isMonitorAudioPlaying.get()) {
+                                start()
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error starting monitor audio", e)
+                            isMonitorAudioPlaying.set(false)
+                            monitorMediaPlayer = null
+                        }
+                    }
+
+                    setOnCompletionListener {
+                        // 播放完成后释放资源并重置状态
+                        it.release()
+                        isMonitorAudioPlaying.set(false)
+                        monitorMediaPlayer = null
+                    }
+
+                    setOnErrorListener { _, _, _ ->
+                        // 发生错误时释放资源并重置状态
+                        Log.e(TAG, "Error playing monitor audio")
+                        isMonitorAudioPlaying.set(false)
+                        monitorMediaPlayer = null
+                        true
+                    }
+
+                    // 异步准备
+                    prepareAsync()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error setting up monitor audio", e)
+                    isMonitorAudioPlaying.set(false)
+                    monitorMediaPlayer = null
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error playing monitor audio", e)
+            Log.e(TAG, "Error creating monitor audio player", e)
+            // 发生异常时重置状态
+            isMonitorAudioPlaying.set(false)
+            monitorMediaPlayer = null
         }
     }
 
-    private fun sendColorFoundBroadcast(x: Int, y: Int) {
-        val intent = Intent("com.bb.colorscan.COLOR_FOUND")
-        intent.putExtra("x", x)
-        intent.putExtra("y", y)
-        sendBroadcast(intent)
+    /**
+     * 停止监控音频播放
+     */
+    private fun stopMonitorAudio() {
+        if (isMonitorAudioPlaying.get()) {
+            Log.d(TAG, "颜色不匹配，停止播放监控音频")
+            monitorMediaPlayer?.let { player ->
+                if (player.isPlaying) {
+                    player.stop()
+                }
+                player.release()
+                monitorMediaPlayer = null
+                isMonitorAudioPlaying.set(false)
+            }
+        }
+    }
+
+    /**
+     * 初始化十字准星悬浮窗
+     */
+    private fun initCrosshairWindow() {
+        // 创建十字准星布局
+        crosshairView = LayoutInflater.from(this).inflate(R.layout.crosshair_view, null)
+
+        // 设置布局参数
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+
+        // 初始位置 - 屏幕中心
+        params.gravity = Gravity.TOP or Gravity.START
+        crosshairX = displayMetrics.widthPixels / 2 - 24 // 减去准星宽度的一半
+        crosshairY = displayMetrics.heightPixels / 2 - 24 // 减去准星高度的一半
+        params.x = crosshairX
+        params.y = crosshairY
+
+        // 获取拖拽手柄区域并设置触摸监听器
+        val dragHandle = crosshairView?.findViewById<View>(R.id.crosshairDragHandle)
+        dragHandle?.setOnTouchListener(crosshairTouchListener)
+
+        // 添加到窗口管理器
+        windowManager?.addView(crosshairView, params)
+
+        // 记录准星中心在屏幕上的实际位置
+        updateCrosshairPosition()
+    }
+
+    /**
+     * 更新十字准星位置
+     */
+    private fun updateCrosshairPosition() {
+        // 准星中心点相对于屏幕的绝对位置 (准星图像的中心点)
+        crosshairX = displayMetrics.widthPixels / 2
+        crosshairY = screenHeight / 2
+    }
+
+    /**
+     * 准星触摸监听器
+     */
+    private val crosshairTouchListener = object : View.OnTouchListener {
+        private var initialX: Int = 0
+        private var initialY: Int = 0
+        private var initialTouchX: Float = 0f
+        private var initialTouchY: Float = 0f
+
+        override fun onTouch(v: View?, event: MotionEvent?): Boolean {
+            when (event?.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    // 记录初始位置
+                    val params = crosshairView?.layoutParams as WindowManager.LayoutParams
+                    initialX = params.x
+                    initialY = params.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    return true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    // 计算移动距离并更新位置
+                    val params = crosshairView?.layoutParams as WindowManager.LayoutParams
+                    params.x = initialX + (event.rawX - initialTouchX).toInt()
+                    params.y = initialY + (event.rawY - initialTouchY).toInt()
+                    windowManager?.updateViewLayout(crosshairView, params)
+
+                    crosshairX = params.x + crosshairView!!.width / 2  // 加上准星宽度的一半
+                    crosshairY = params.y + crosshairView!!.width / 2  // 加上准星高度的一半
+
+                    return true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    // 检测是否靠近屏幕边缘，如果是则自动贴边
+//                    snapToEdgeIfNeeded(crosshairView)
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    /**
+     * 获取实际可用屏幕高度（减去状态栏和导航栏）
+     */
+    private fun getActualScreenHeight(): Int {
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val displayMetrics = DisplayMetrics()
+        windowManager.defaultDisplay.getMetrics(displayMetrics)
+
+        // 获取屏幕的实际高度
+        val realHeight = displayMetrics.heightPixels
+
+        // 计算状态栏高度
+        val statusBarHeight = getStatusBarHeight()
+
+        // 计算导航栏高度
+        val navigationBarHeight = getNavigationBarHeight()
+
+        // 计算实际可用高度
+        val actualHeight = realHeight - statusBarHeight - navigationBarHeight
+
+        Log.d(
+            TAG,
+            "屏幕实际高度: $realHeight, 状态栏高度: $statusBarHeight, 导航栏高度: $navigationBarHeight, 可用高度: $actualHeight"
+        )
+
+        return actualHeight
+    }
+
+    /**
+     * 获取状态栏高度
+     */
+    private fun getStatusBarHeight(): Int {
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resourceId > 0) {
+            resources.getDimensionPixelSize(resourceId)
+        } else {
+            0
+        }
+    }
+
+    /**
+     * 获取导航栏高度
+     */
+    private fun getNavigationBarHeight(): Int {
+        val resourceId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+
+        // 检查设备是否有导航栏
+        val hasNavigationBar =
+            resources.getIdentifier("config_showNavigationBar", "bool", "android") > 0 &&
+                    resources.getBoolean(
+                        resources.getIdentifier(
+                            "config_showNavigationBar",
+                            "bool",
+                            "android"
+                        )
+                    )
+
+        return if (resourceId > 0 && hasNavigationBar) {
+            resources.getDimensionPixelSize(resourceId)
+        } else {
+            0
+        }
     }
 
     private fun createNotification(): Notification {
@@ -529,8 +930,13 @@ class ScreenCaptureService : Service() {
         mediaPlayer?.release()
         mediaPlayer = null
 
+        // 释放监控音频播放器
+        monitorMediaPlayer?.release()
+        monitorMediaPlayer = null
+
         // 移除悬浮窗
         windowManager?.removeView(floatingView)
+        windowManager?.removeView(crosshairView)
 
         // 释放资源
         virtualDisplay?.release()

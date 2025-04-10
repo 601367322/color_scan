@@ -23,7 +23,6 @@ import com.bb.colorscan.viewmodel.SettingsViewModel
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: SettingsViewModel
-    private var colorReceiver: BroadcastReceiver? = null
     
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
 
@@ -49,9 +48,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         
-        // 注册颜色检测广播接收器
-        registerColorReceiver()
-        
         setContent {
             ColorScanTheme {
                 SettingsScreen(viewModel = viewModel)
@@ -61,34 +57,6 @@ class MainActivity : ComponentActivity() {
     
     override fun onDestroy() {
         super.onDestroy()
-        // 注销广播接收器
-        unregisterColorReceiver()
-    }
-    
-    private fun registerColorReceiver() {
-        colorReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                if (intent.action == "com.bb.colorscan.COLOR_FOUND") {
-                    val x = intent.getIntExtra("x", 0)
-                    val y = intent.getIntExtra("y", 0)
-                    // 处理颜色检测事件
-                    Toast.makeText(this@MainActivity, "在坐标($x, $y)找到目标颜色!", Toast.LENGTH_SHORT).show()
-                    // 这里可以播放音频提示等
-                }
-            }
-        }
-        
-        registerReceiver(colorReceiver, IntentFilter("com.bb.colorscan.COLOR_FOUND"))
-    }
-    
-    private fun unregisterColorReceiver() {
-        colorReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (e: Exception) {
-                // 忽略未注册的接收器异常
-            }
-        }
     }
     
     /**
