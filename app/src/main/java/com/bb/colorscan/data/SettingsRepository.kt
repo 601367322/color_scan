@@ -84,4 +84,26 @@ class SettingsRepository(context: Context) {
     fun getCurrentRgb(): String {
         return sharedPrefs.getString(KEY_TARGET_RGB, DEFAULT_RGB) ?: DEFAULT_RGB
     }
+    
+    /**
+     * 获取监控音频路径（非Flow形式，用于服务等）
+     */
+    fun getMonitorAudioPath(): String {
+        return sharedPrefs.getString(KEY_MONITOR_AUDIO, "") ?: ""
+    }
+    
+    /**
+     * 获取倒计时音频路径（非Flow形式，用于服务等）
+     */
+    fun getCountdownAudioPath(): String {
+        return sharedPrefs.getString(KEY_COUNTDOWN_AUDIO, "") ?: ""
+    }
+    
+    /**
+     * 获取倒计时时长（非Flow形式，用于服务等）
+     */
+    fun getCountdownDuration(): String {
+        return sharedPrefs.getString(KEY_COUNTDOWN_DURATION, DEFAULT_COUNTDOWN_DURATION) 
+            ?: DEFAULT_COUNTDOWN_DURATION
+    }
 } 
