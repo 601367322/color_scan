@@ -41,11 +41,14 @@ class ScreenCaptureService : Service() {
         private const val COLOR_TOLERANCE = 20
     }
 
-    private val serviceHandler: ServiceHandler by lazy {
+    private val handlerThread: HandlerThread by lazy {
         val thread = HandlerThread("ScreenCaptureThread", Process.THREAD_PRIORITY_BACKGROUND)
         thread.start()
-        
-        ServiceHandler(thread.looper, WeakReference(this))
+        thread
+    }
+    
+    private val handler: Handler by lazy {
+        Handler(handlerThread.looper)
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -56,15 +59,38 @@ class ScreenCaptureService : Service() {
     private val isRunning = AtomicBoolean(false)
     private var targetRgb: Triple<Int, Int, Int>? = null
     private lateinit var settingsRepository: SettingsRepository
-
-    // 用于定期截屏的Handler
-    private class ServiceHandler(looper: Looper, private val service: WeakReference<ScreenCaptureService>) : Handler(looper) {
-        override fun handleMessage(msg: Message) {
-            service.get()?.captureScreen()
-            service.get()?.let {
-                if (it.isRunning.get()) {
-                    sendEmptyMessageDelayed(0, DEFAULT_CAPTURE_INTERVAL)
+    
+    // 图像可用监听器
+    private val imageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
+        if (!isRunning.get()) return@OnImageAvailableListener
+        
+        executor.execute {
+            try {
+                val image = reader.acquireLatestImage()
+                if (image != null) {
+                    // 将图像转换为Bitmap
+                    val planes = image.planes
+                    val buffer = planes[0].buffer
+                    val pixelStride = planes[0].pixelStride
+                    val rowStride = planes[0].rowStride
+                    val rowPadding = rowStride - pixelStride * image.width
+                    
+                    // 创建Bitmap
+                    val bitmap = Bitmap.createBitmap(
+                        image.width + rowPadding / pixelStride,
+                        image.height,
+                        Bitmap.Config.ARGB_8888
+                    )
+                    bitmap.copyPixelsFromBuffer(buffer)
+                    
+                    // 分析图像
+                    analyzeImage(bitmap)
+                    
+                    // 释放资源
+                    image.close()
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing image", e)
             }
         }
     }
@@ -136,7 +162,10 @@ class ScreenCaptureService : Service() {
             displayMetrics.heightPixels,
             PixelFormat.RGBA_8888,
             2
-        )
+        ).apply {
+            // 设置图像可用监听器
+            setOnImageAvailableListener(imageAvailableListener, handler)
+        }
         
         // 创建虚拟显示
         virtualDisplay = mediaProjection?.createVirtualDisplay(
@@ -152,46 +181,8 @@ class ScreenCaptureService : Service() {
     }
 
     private fun startCapturing() {
-        if (!isRunning.getAndSet(true)) {
-            serviceHandler.sendEmptyMessage(0)
-        }
-    }
-
-    private fun captureScreen() {
-        if (!isRunning.get() || imageReader == null) {
-            return
-        }
-
-        executor.execute {
-            try {
-                // 获取最新的图像
-                val image = imageReader?.acquireLatestImage()
-                if (image != null) {
-                    // 将图像转换为Bitmap
-                    val planes = image.planes
-                    val buffer = planes[0].buffer
-                    val pixelStride = planes[0].pixelStride
-                    val rowStride = planes[0].rowStride
-                    val rowPadding = rowStride - pixelStride * image.width
-                    
-                    // 创建Bitmap
-                    val bitmap = Bitmap.createBitmap(
-                        image.width + rowPadding / pixelStride,
-                        image.height,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    bitmap.copyPixelsFromBuffer(buffer)
-                    
-                    // 分析图像
-                    analyzeImage(bitmap)
-                    
-                    // 释放资源
-                    image.close()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error capturing screen", e)
-            }
-        }
+        isRunning.set(true)
+        Log.d(TAG, "Screen capture started with image listener")
     }
 
     private fun analyzeImage(bitmap: Bitmap) {
@@ -270,12 +261,15 @@ class ScreenCaptureService : Service() {
     override fun onDestroy() {
         // 停止服务
         isRunning.set(false)
-        serviceHandler.removeCallbacksAndMessages(null)
+        
+        // 移除监听器
+        imageReader?.setOnImageAvailableListener(null, null)
         
         // 释放资源
         virtualDisplay?.release()
         imageReader?.close()
         mediaProjection?.stop()
+        handlerThread.quitSafely()
         
         super.onDestroy()
     }

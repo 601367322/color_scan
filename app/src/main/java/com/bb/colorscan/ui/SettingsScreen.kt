@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +32,7 @@ fun SettingsScreen(
     val countdownDuration by viewModel.countdownDuration.collectAsState()
     val targetRGB by viewModel.targetRgb.collectAsState()
     val isRecording by viewModel.isRecording.collectAsState()
+    val showOverlayPermissionDialog by viewModel.showOverlayPermissionDialog.collectAsState()
     
     val context = LocalContext.current
     
@@ -41,7 +42,8 @@ fun SettingsScreen(
     ) { uri: Uri? ->
         uri?.let {
             viewModel.updateMonitorAudioPath(it)
-            Toast.makeText(context, "已选择音频文件", Toast.LENGTH_SHORT).show()
+            viewModel.saveMonitorAudioSettings() // 自动保存
+            Toast.makeText(context, "已选择并保存音频文件", Toast.LENGTH_SHORT).show()
         }
     }
     
@@ -51,8 +53,32 @@ fun SettingsScreen(
     ) { uri: Uri? ->
         uri?.let {
             viewModel.updateCountdownAudioPath(it)
-            Toast.makeText(context, "已选择音频文件", Toast.LENGTH_SHORT).show()
+            viewModel.saveCountdownAudioSettings() // 自动保存
+            Toast.makeText(context, "已选择并保存音频文件", Toast.LENGTH_SHORT).show()
         }
+    }
+    
+    // 权限请求对话框
+    if (showOverlayPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissOverlayPermissionDialog() },
+            title = { Text("需要权限") },
+            text = { Text("颜色扫描功能需要\"在其他应用上显示\"的权限才能正常工作。请在设置中授予此权限。") },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.requestOverlayPermission() }
+                ) {
+                    Text("去设置")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.dismissOverlayPermissionDialog() }
+                ) {
+                    Text("取消")
+                }
+            }
+        )
     }
     
     Scaffold(
@@ -99,28 +125,26 @@ fun SettingsScreen(
             )
             
             // RGB颜色设置
-            CompactSettingItem(
+            SettingItemAutoSave(
                 title = "监控颜色RGB",
                 value = targetRGB,
-                onValueChange = { viewModel.updateTargetRgb(it) },
-                label = "RGB值 (例如: 255, 0, 0)",
-                onSave = { 
-                    viewModel.saveTargetRgbSettings()
-                    Toast.makeText(context, "监控颜色已保存", Toast.LENGTH_SHORT).show()
-                }
+                onValueChange = { 
+                    viewModel.updateTargetRgb(it)
+                    viewModel.saveTargetRgbSettings()  // 自动保存
+                },
+                label = "RGB值 (例如: 255, 0, 0)"
             )
             
             // 监控音频设置
-            AudioSettingItem(
+            AudioSettingItemAutoSave(
                 title = "监控提示音频",
                 value = monitorAudioPath,
-                onValueChange = { viewModel.updateMonitorAudioPath(it) },
+                onValueChange = { 
+                    viewModel.updateMonitorAudioPath(it)
+                    viewModel.saveMonitorAudioSettings()  // 自动保存
+                },
                 label = "音频文件路径",
-                onBrowse = { monitorAudioLauncher.launch("audio/*") },
-                onSave = { 
-                    viewModel.saveMonitorAudioSettings()
-                    Toast.makeText(context, "监控提示音频已保存", Toast.LENGTH_SHORT).show()
-                }
+                onBrowse = { monitorAudioLauncher.launch("audio/*") }
             )
             
             // 倒计时设置标题
@@ -132,28 +156,26 @@ fun SettingsScreen(
             )
             
             // 倒计时时长设置
-            CompactSettingItem(
+            SettingItemAutoSave(
                 title = "倒计时时长",
                 value = countdownDuration,
-                onValueChange = { viewModel.updateCountdownDuration(it) },
-                label = "秒数",
-                onSave = { 
-                    viewModel.saveCountdownDurationSettings()
-                    Toast.makeText(context, "倒计时时长已保存", Toast.LENGTH_SHORT).show()
-                }
+                onValueChange = { 
+                    viewModel.updateCountdownDuration(it)
+                    viewModel.saveCountdownDurationSettings()  // 自动保存
+                },
+                label = "秒数"
             )
             
             // 倒计时音频设置
-            AudioSettingItem(
+            AudioSettingItemAutoSave(
                 title = "倒计时提示音频",
                 value = countdownAudioPath,
-                onValueChange = { viewModel.updateCountdownAudioPath(it) },
+                onValueChange = { 
+                    viewModel.updateCountdownAudioPath(it)
+                    viewModel.saveCountdownAudioSettings()  // 自动保存
+                },
                 label = "音频文件路径",
-                onBrowse = { countdownAudioLauncher.launch("audio/*") },
-                onSave = { 
-                    viewModel.saveCountdownAudioSettings()
-                    Toast.makeText(context, "倒计时提示音频已保存", Toast.LENGTH_SHORT).show()
-                }
+                onBrowse = { countdownAudioLauncher.launch("audio/*") }
             )
             
             Spacer(modifier = Modifier.height(16.dp))
@@ -217,12 +239,11 @@ fun RecordingToggleCard(
 }
 
 @Composable
-fun CompactSettingItem(
+fun SettingItemAutoSave(
     title: String,
     value: String,
     onValueChange: (String) -> Unit,
-    label: String,
-    onSave: () -> Unit
+    label: String
 ) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -236,24 +257,12 @@ fun CompactSettingItem(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 标题和保存按钮在同一行
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall
-                )
-                FilledTonalButton(
-                    onClick = onSave,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("保存", style = MaterialTheme.typography.labelMedium)
-                }
-            }
+            // 只显示标题
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             
             // 输入框
             OutlinedTextField(
@@ -273,13 +282,12 @@ fun CompactSettingItem(
 }
 
 @Composable
-fun AudioSettingItem(
+fun AudioSettingItemAutoSave(
     title: String,
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
-    onBrowse: () -> Unit,
-    onSave: () -> Unit
+    onBrowse: () -> Unit
 ) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -293,24 +301,12 @@ fun AudioSettingItem(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 标题和保存按钮在同一行
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall
-                )
-                FilledTonalButton(
-                    onClick = onSave,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("保存", style = MaterialTheme.typography.labelMedium)
-                }
-            }
+            // 只显示标题
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             
             // 输入框和浏览按钮
             Row(
@@ -337,7 +333,7 @@ fun AudioSettingItem(
                     modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.AudioFile,
+                        imageVector = Icons.Default.Add,
                         contentDescription = "选择音频文件"
                     )
                 }
