@@ -535,10 +535,6 @@ class ScreenCaptureService : Service() {
         // 在这里实现颜色分析逻辑
         targetRgb?.let { (r, g, b) ->
             try {
-                // 使用准星中心点的位置获取像素颜色
-                // 注意：由于图像可能与屏幕大小不完全一致，需要进行比例转换
-                val scaleX = bitmap.width.toFloat() / displayMetrics.widthPixels
-                val scaleY = bitmap.height.toFloat() / displayMetrics.heightPixels
 
                 // 计算移动距离并更新位置
                 val params = crosshairView?.layoutParams as WindowManager.LayoutParams
