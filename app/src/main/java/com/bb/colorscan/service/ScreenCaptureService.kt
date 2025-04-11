@@ -226,6 +226,10 @@ class ScreenCaptureService : Service() {
             val newState = !isAnalysisEnabled.get()
             isAnalysisEnabled.set(newState)
             updateAnalysisButtonAppearance(newState)
+            if(!newState){
+                //停止播放
+                stopMonitorAudio()
+            }
         }
 
         // 倒计时按钮
