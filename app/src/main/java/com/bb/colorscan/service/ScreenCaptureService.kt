@@ -10,6 +10,7 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.AudioManager
 import android.media.ImageReader
 import android.media.MediaPlayer
 import android.media.projection.MediaProjection
@@ -23,7 +24,6 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.bb.colorscan.MainActivity
 import com.bb.colorscan.R
@@ -109,49 +109,22 @@ class ScreenCaptureService : Service() {
     private var crosshairX: Int = 0
     private var crosshairY: Int = 0
 
-    // 图像可用监听器
-    private val imageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
-        if (!isRunning.get()) return@OnImageAvailableListener
-        if (!isAnalysisEnabled.get()) {
-            reader.acquireLatestImage()?.close()
-            return@OnImageAvailableListener
-        }
-        executor.execute {
-            try {
-                val image = reader.acquireLatestImage()
-                if (image != null) {
-                    // 将图像转换为Bitmap
-                    val planes = image.planes
-                    val buffer = planes[0].buffer
-                    val pixelStride = planes[0].pixelStride
-                    val rowStride = planes[0].rowStride
-                    val rowPadding = rowStride - pixelStride * image.width
-
-                    // 创建Bitmap
-                    val bitmap = Bitmap.createBitmap(
-                        image.width + rowPadding / pixelStride,
-                        image.height,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    bitmap.copyPixelsFromBuffer(buffer)
-
-                    // 分析图像
-                    analyzeImage(bitmap)
-
-                    // 释放资源
-                    image.close()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error processing image", e)
-            }
-        }
-    }
+    // 添加 AudioManager 相关变量
+    private lateinit var audioManager: AudioManager
+    private var originalVolume: Int = 0
+    private var originalRingerMode: Int = 0
 
     override fun onCreate() {
         super.onCreate()
+        // 初始化 AudioManager
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        
         // 获取屏幕尺寸
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         windowManager.defaultDisplay.getMetrics(displayMetrics)
+
+         var realDisplayMetrics = DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(realDisplayMetrics)
 
         // 计算实际可用高度
         screenHeight = getActualScreenHeight()
@@ -188,8 +161,6 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        // 初始化服务
-        startForeground(NOTIFICATION_ID, createNotification())
         initMediaProjection(resultCode, data)
         startCapturing()
 
@@ -424,61 +395,6 @@ class ScreenCaptureService : Service() {
     }
 
     /**
-     * 播放音频
-     */
-    private fun playAudio() {
-        // 获取音频文件路径
-        val audioPath = settingsRepository.getCountdownAudioPath()
-        if (audioPath.isBlank()) return
-
-        try {
-            // 创建媒体播放器
-            mediaPlayer = MediaPlayer().apply {
-                try {
-                    // 检查是否是本地文件路径
-                    if (audioPath.startsWith("content://")) {
-                        // 处理content URI
-                        setDataSource(applicationContext, Uri.parse(audioPath))
-                    } else {
-                        // 处理本地文件路径
-                        setDataSource(audioPath)
-                    }
-
-                    // 设置监听器
-                    setOnPreparedListener {
-                        try {
-                            start()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error starting countdown audio", e)
-                            mediaPlayer = null
-                        }
-                    }
-
-                    setOnCompletionListener {
-                        it.release()
-                        mediaPlayer = null
-                    }
-
-                    setOnErrorListener { _, _, _ ->
-                        Log.e(TAG, "Error playing countdown audio")
-                        mediaPlayer = null
-                        true
-                    }
-
-                    // 异步准备
-                    prepareAsync()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error setting up countdown audio", e)
-                    mediaPlayer = null
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error creating countdown audio player", e)
-            mediaPlayer = null
-        }
-    }
-
-    /**
      * 解析RGB字符串为Triple对象
      */
     private fun parseRgbString(rgbString: String) {
@@ -531,27 +447,42 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    // MediaProjection回调
-    private val mediaProjectionCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        object : MediaProjection.Callback() {
-            override fun onStop() {
-                Log.d(TAG, "MediaProjection已停止")
-                stopSelf()
-            }
+    // 图像可用监听器
+    private val imageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
+        if (!isRunning.get()) return@OnImageAvailableListener
+        if (!isAnalysisEnabled.get()) {
+            reader.acquireLatestImage()?.close()
+            return@OnImageAvailableListener
+        }
+        executor.execute {
+            try {
+                val image = reader.acquireLatestImage()
+                if (image != null) {
+                    // 将图像转换为Bitmap
+                    val planes = image.planes
+                    val buffer = planes[0].buffer
+                    val pixelStride = planes[0].pixelStride
+                    val rowStride = planes[0].rowStride
+                    val rowPadding = rowStride - pixelStride * image.width
 
-            override fun onCapturedContentResize(width: Int, height: Int) {
-                Log.d(TAG, "屏幕尺寸已更改: $width x $height")
-            }
+                    // 创建Bitmap
+                    val bitmap = Bitmap.createBitmap(
+                        image.width + rowPadding / pixelStride,
+                        image.height,
+                        Bitmap.Config.ARGB_8888
+                    )
+                    bitmap.copyPixelsFromBuffer(buffer)
 
-            override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
-                Log.d(TAG, "内容可见性已更改: $isVisible")
+                    // 分析图像
+                    analyzeImage(bitmap)
+
+                    // 释放资源
+                    image.close()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing image", e)
             }
         }
-    } else null
-
-    private fun startCapturing() {
-        isRunning.set(true)
-        Log.d(TAG, "Screen capture started with image listener")
     }
 
     private fun analyzeImage(bitmap: Bitmap) {
@@ -571,18 +502,18 @@ class ScreenCaptureService : Service() {
 
 
                 // 测试，在bitmapX、bitmapY的位置绘制一个绿色的点
-                val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-                val canvas = Canvas(mutableBitmap)
-                val paint = Paint().apply {
-                    color = Color.GREEN
-                    style = Paint.Style.FILL
-                }
-
-                // 绘制绿色点，半径为5像素
-                canvas.drawCircle(bitmapX.toFloat(), bitmapY.toFloat(), 5f, paint)
+//                val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+//                val canvas = Canvas(mutableBitmap)
+//                val paint = Paint().apply {
+//                    color = Color.GREEN
+//                    style = Paint.Style.FILL
+//                }
+//
+//                // 绘制绿色点，半径为5像素
+//                canvas.drawCircle(bitmapX.toFloat(), bitmapY.toFloat(), 5f, paint)
 
                 // 可选：保存修改后的图像用于调试
-                saveImageForDebug(mutableBitmap)
+//                saveImageForDebug(mutableBitmap)
 
 
                 // 获取像素颜色
@@ -619,6 +550,30 @@ class ScreenCaptureService : Service() {
         }
     }
 
+    // MediaProjection回调
+    private val mediaProjectionCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        object : MediaProjection.Callback() {
+            override fun onStop() {
+                Log.d(TAG, "MediaProjection已停止")
+                stopSelf()
+            }
+
+            override fun onCapturedContentResize(width: Int, height: Int) {
+                Log.d(TAG, "屏幕尺寸已更改: $width x $height")
+            }
+
+            override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+                Log.d(TAG, "内容可见性已更改: $isVisible")
+            }
+        }
+    } else null
+
+    private fun startCapturing() {
+        isRunning.set(true)
+        Log.d(TAG, "Screen capture started with image listener")
+    }
+
+
     /**
      * 保存图像到外部存储用于调试
      */
@@ -646,6 +601,111 @@ class ScreenCaptureService : Service() {
         }
     }
 
+
+    /**
+     * 设置最大音量
+     */
+    private fun setMaxVolume() {
+        try {
+            // 保存原始音量和铃声模式
+            originalVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            originalRingerMode = audioManager.ringerMode
+
+            // 设置最大音量
+            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVolume, 0)
+            
+            // 设置铃声模式为正常
+            audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            
+            Log.d(TAG, "已设置最大音量: $maxVolume")
+        } catch (e: Exception) {
+            Log.e(TAG, "设置最大音量失败", e)
+        }
+    }
+
+    /**
+     * 恢复原始音量设置
+     */
+    private fun restoreOriginalVolume() {
+        try {
+            // 恢复原始音量
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalVolume, 0)
+            
+            // 恢复原始铃声模式
+            audioManager.ringerMode = originalRingerMode
+            
+            Log.d(TAG, "已恢复原始音量: $originalVolume")
+        } catch (e: Exception) {
+            Log.e(TAG, "恢复原始音量失败", e)
+        }
+    }
+
+    /**
+     * 播放音频
+     */
+    private fun playAudio() {
+        // 获取音频文件路径
+        val audioPath = settingsRepository.getCountdownAudioPath()
+        if (audioPath.isBlank()) return
+
+        try {
+            // 设置最大音量
+            setMaxVolume()
+
+            // 创建媒体播放器
+            mediaPlayer = MediaPlayer().apply {
+                try {
+                    // 检查是否是本地文件路径
+                    if (audioPath.startsWith("content://")) {
+                        // 处理content URI
+                        setDataSource(applicationContext, Uri.parse(audioPath))
+                    } else {
+                        // 处理本地文件路径
+                        setDataSource(audioPath)
+                    }
+
+                    isLooping = true
+
+                    // 设置监听器
+                    setOnPreparedListener {
+                        try {
+                            start()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error starting countdown audio", e)
+                            mediaPlayer = null
+                            restoreOriginalVolume()
+                        }
+                    }
+
+                    setOnCompletionListener {
+                        it.release()
+                        mediaPlayer = null
+                        restoreOriginalVolume()
+                    }
+
+                    setOnErrorListener { _, _, _ ->
+                        Log.e(TAG, "Error playing countdown audio")
+                        mediaPlayer = null
+                        restoreOriginalVolume()
+                        true
+                    }
+
+                    // 异步准备
+                    prepareAsync()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error setting up countdown audio", e)
+                    mediaPlayer = null
+                    restoreOriginalVolume()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating countdown audio player", e)
+            mediaPlayer = null
+            restoreOriginalVolume()
+        }
+    }
+    
     /**
      * 停止倒计时音频播放
      */
@@ -656,6 +716,7 @@ class ScreenCaptureService : Service() {
                 player.stop()
                 player.release()
                 mediaPlayer = null
+                restoreOriginalVolume()
             }
         }
     }
@@ -678,6 +739,9 @@ class ScreenCaptureService : Service() {
             // 设置播放状态为true
             isMonitorAudioPlaying.set(true)
 
+            // 设置最大音量
+            setMaxVolume()
+
             // 创建媒体播放器
             monitorMediaPlayer = MediaPlayer().apply {
                 try {
@@ -690,6 +754,8 @@ class ScreenCaptureService : Service() {
                         setDataSource(audioPath)
                     }
 
+                    isLooping = true
+
                     // 设置监听器
                     setOnPreparedListener {
                         try {
@@ -700,6 +766,7 @@ class ScreenCaptureService : Service() {
                             Log.e(TAG, "Error starting monitor audio", e)
                             isMonitorAudioPlaying.set(false)
                             monitorMediaPlayer = null
+                            restoreOriginalVolume()
                         }
                     }
 
@@ -708,6 +775,7 @@ class ScreenCaptureService : Service() {
                         it.release()
                         isMonitorAudioPlaying.set(false)
                         monitorMediaPlayer = null
+                        restoreOriginalVolume()
                     }
 
                     setOnErrorListener { _, _, _ ->
@@ -715,6 +783,7 @@ class ScreenCaptureService : Service() {
                         Log.e(TAG, "Error playing monitor audio")
                         isMonitorAudioPlaying.set(false)
                         monitorMediaPlayer = null
+                        restoreOriginalVolume()
                         true
                     }
 
@@ -724,6 +793,7 @@ class ScreenCaptureService : Service() {
                     Log.e(TAG, "Error setting up monitor audio", e)
                     isMonitorAudioPlaying.set(false)
                     monitorMediaPlayer = null
+                    restoreOriginalVolume()
                 }
             }
         } catch (e: Exception) {
@@ -731,6 +801,7 @@ class ScreenCaptureService : Service() {
             // 发生异常时重置状态
             isMonitorAudioPlaying.set(false)
             monitorMediaPlayer = null
+            restoreOriginalVolume()
         }
     }
 
@@ -747,6 +818,7 @@ class ScreenCaptureService : Service() {
                 player.release()
                 monitorMediaPlayer = null
                 isMonitorAudioPlaying.set(false)
+                restoreOriginalVolume()
             }
         }
     }
@@ -905,35 +977,6 @@ class ScreenCaptureService : Service() {
             0
         }
     }
-
-    private fun createNotification(): Notification {
-        // 创建通知渠道
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "屏幕捕获",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val notificationManager =
-                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
-        }
-
-        // 创建通知
-        val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent,
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("颜色扫描器正在运行")
-            .setContentText("正在监控屏幕颜色变化")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentIntent(pendingIntent)
-            .build()
-    }
-
     override fun onDestroy() {
         // 停止服务
         isRunning.set(false)
