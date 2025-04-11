@@ -46,6 +46,17 @@
             android:padding="8dp"
             android:src="@drawable/ic_countdown_start" />
 
+        <!-- 停止倒计时音频按钮 -->
+        <ImageButton
+            android:id="@+id/stopCountdownAudioButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="停止音频"
+            android:padding="8dp"
+            android:src="@drawable/ic_stop_audio"
+            android:visibility="gone" />
+
         <!-- 倒计时文本 -->
         <TextView
             android:id="@+id/countdownText"

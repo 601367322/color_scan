@@ -104,6 +104,7 @@ class ScreenCaptureService : Service() {
     private var countdownTextView: TextView? = null
     private var analysisButton: ImageButton? = null
     private var countdownButton: ImageButton? = null
+    private var stopCountdownAudioButton: ImageButton? = null
 
     // 十字准星相关
     private var crosshairView: View? = null
@@ -114,6 +115,9 @@ class ScreenCaptureService : Service() {
     private lateinit var audioManager: AudioManager
     private var originalVolume: Int = 0
     private var originalRingerMode: Int = 0
+
+    // 添加倒计时音频播放状态标志
+    private val isCountdownAudioPlaying = AtomicBoolean(false)
 
     override fun onCreate() {
         super.onCreate()
@@ -182,6 +186,7 @@ class ScreenCaptureService : Service() {
         analysisButton = floatingView?.findViewById(R.id.analysisButton)
         countdownButton = floatingView?.findViewById(R.id.countdownButton)
         countdownTextView = floatingView?.findViewById(R.id.countdownText)
+        stopCountdownAudioButton = floatingView?.findViewById(R.id.stopCountdownAudioButton)
 
         // 设置布局参数
         val params = WindowManager.LayoutParams(
@@ -241,6 +246,12 @@ class ScreenCaptureService : Service() {
                 // 开始新的倒计时
                 startCountdown()
             }
+        }
+
+        // 停止倒计时音频按钮
+        stopCountdownAudioButton?.setOnClickListener {
+            stopCountdownAudio()
+            hideStopCountdownAudioButton()
         }
     }
 
@@ -692,9 +703,15 @@ class ScreenCaptureService : Service() {
                     setOnPreparedListener {
                         try {
                             start()
+                            // 设置倒计时音频播放状态为true
+                            isCountdownAudioPlaying.set(true)
+                            // 显示停止音频按钮
+                            showStopCountdownAudioButton()
                         } catch (e: Exception) {
                             Log.e(TAG, "Error starting countdown audio", e)
                             mediaPlayer = null
+                            isCountdownAudioPlaying.set(false)
+                            hideStopCountdownAudioButton()
                             restoreOriginalVolume()
                         }
                     }
@@ -702,12 +719,16 @@ class ScreenCaptureService : Service() {
                     setOnCompletionListener {
                         it.release()
                         mediaPlayer = null
+                        isCountdownAudioPlaying.set(false)
+                        hideStopCountdownAudioButton()
                         restoreOriginalVolume()
                     }
 
                     setOnErrorListener { _, _, _ ->
                         Log.e(TAG, "Error playing countdown audio")
                         mediaPlayer = null
+                        isCountdownAudioPlaying.set(false)
+                        hideStopCountdownAudioButton()
                         restoreOriginalVolume()
                         true
                     }
@@ -717,12 +738,16 @@ class ScreenCaptureService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Error setting up countdown audio", e)
                     mediaPlayer = null
+                    isCountdownAudioPlaying.set(false)
+                    hideStopCountdownAudioButton()
                     restoreOriginalVolume()
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error creating countdown audio player", e)
             mediaPlayer = null
+            isCountdownAudioPlaying.set(false)
+            hideStopCountdownAudioButton()
             restoreOriginalVolume()
         }
     }
@@ -733,12 +758,32 @@ class ScreenCaptureService : Service() {
     private fun stopCountdownAudio() {
         mediaPlayer?.let { player ->
             if (player.isPlaying) {
-                Log.d(TAG, "颜色匹配，停止倒计时音频")
+                Log.d(TAG, "停止倒计时音频")
                 player.stop()
                 player.release()
                 mediaPlayer = null
+                isCountdownAudioPlaying.set(false)
+                hideStopCountdownAudioButton()
                 restoreOriginalVolume()
             }
+        }
+    }
+
+    /**
+     * 显示停止倒计时音频按钮
+     */
+    private fun showStopCountdownAudioButton() {
+        Handler(Looper.getMainLooper()).post {
+            stopCountdownAudioButton?.visibility = View.VISIBLE
+        }
+    }
+
+    /**
+     * 隐藏停止倒计时音频按钮
+     */
+    private fun hideStopCountdownAudioButton() {
+        Handler(Looper.getMainLooper()).post {
+            stopCountdownAudioButton?.visibility = View.GONE
         }
     }
 
