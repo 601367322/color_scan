@@ -24,6 +24,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.bb.colorscan.MainActivity
 import com.bb.colorscan.R
@@ -161,6 +162,9 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
+        // 初始化服务
+        startForeground(NOTIFICATION_ID, createNotification())
+
         initMediaProjection(resultCode, data)
         startCapturing()
 
@@ -191,10 +195,17 @@ class ScreenCaptureService : Service() {
             PixelFormat.TRANSLUCENT
         )
 
-        // 初始位置
+        // 初始位置 - 屏幕中间最右侧
         params.gravity = Gravity.TOP or Gravity.START
-        params.x = 100
-        params.y = 100
+        
+        // 添加悬浮窗之前需要先测量其大小
+        floatingView?.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val floatingViewWidth = floatingView?.measuredWidth ?: 0
+        
+        // 设置x坐标为屏幕宽度减去悬浮窗宽度
+        params.x = displayMetrics.widthPixels - floatingViewWidth
+        // 设置y坐标为屏幕高度的一半减去控件高度的一半
+        params.y = displayMetrics.heightPixels / 2 - (floatingView?.measuredHeight ?: 0) / 2
 
         // 设置按钮点击监听
         setupButtonListeners()
@@ -351,8 +362,9 @@ class ScreenCaptureService : Service() {
     private fun startCountdown() {
         if (countdownRunning.get()) return
 
-        // 从设置中获取倒计时时长
-        countdownSeconds = settingsRepository.getCountdownDuration().toIntOrNull() ?: 5
+        // 从设置中获取倒计时时长（分钟）并转换为秒
+        val durationInMinutes = settingsRepository.getCountdownDuration().toDoubleOrNull() ?: 5.0
+        countdownSeconds = (durationInMinutes * 60).toInt()
 
         // 显示倒计时文本
         countdownTextView?.visibility = View.VISIBLE
@@ -535,6 +547,11 @@ class ScreenCaptureService : Service() {
 
                     Log.d(TAG, "Found target color at crosshair: RGB($pixelR, $pixelG, $pixelB)")
 
+                    // 如果倒计时正在运行，则停止它
+                    if (countdownRunning.get()) {
+                        stopCountdown()
+                    }
+                    
                     // 如果倒计时音频正在播放，则停止它
                     stopCountdownAudio()
 
@@ -977,6 +994,35 @@ class ScreenCaptureService : Service() {
             0
         }
     }
+
+    private fun createNotification(): Notification {
+        // 创建通知渠道
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "屏幕捕获",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val notificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        // 创建通知
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("颜色扫描器正在运行")
+            .setContentText("正在监控屏幕颜色变化")
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setContentIntent(pendingIntent)
+            .build()
+    }
+
     override fun onDestroy() {
         // 停止服务
         isRunning.set(false)

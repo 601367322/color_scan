@@ -7,8 +7,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -75,6 +77,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         
+        // 检查悬浮窗权限
+        if (!checkOverlayPermission()) {
+            return
+        }
+        
         // 如果已经有录屏权限，直接启动服务
         if (viewModel.mediaProjectionResultCode != 0 && viewModel.mediaProjectionResultData != null) {
             viewModel.startScreenCapture()
@@ -85,12 +92,31 @@ class MainActivity : ComponentActivity() {
         requestMediaProjection()
     }
     
+    private fun checkOverlayPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!Settings.canDrawOverlays(this)) {
+                // 没有悬浮窗权限，显示提示并引导用户去授权
+                Toast.makeText(this, "需要悬浮窗权限才能显示取色器", Toast.LENGTH_LONG).show()
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+                return false
+            }
+        }
+        return true
+    }
+    
     private fun requestMediaProjection() {
-        val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        startActivityForResult(
-            mediaProjectionManager.createScreenCaptureIntent(),
-            REQUEST_MEDIA_PROJECTION
-        )
+        // 确保已经有悬浮窗权限才请求录屏
+        if (checkOverlayPermission()) {
+            val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            startActivityForResult(
+                mediaProjectionManager.createScreenCaptureIntent(),
+                REQUEST_MEDIA_PROJECTION
+            )
+        }
     }
     
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

@@ -19,7 +19,6 @@ import android.provider.Settings
 import android.app.AlertDialog
 import android.content.DialogInterface
 import android.os.Build
-import com.bb.colorscan.service.ScreenCaptureForgroundService
 
 /**
  * 设置页面的ViewModel，负责处理设置相关的业务逻辑
@@ -202,25 +201,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             }
 
             val context = getApplication<Application>().applicationContext
+            val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
+                putExtra(ScreenCaptureService.RESULT_CODE, mediaProjectionResultCode)
+                putExtra(ScreenCaptureService.DATA, mediaProjectionResultData)
+                putExtra(ScreenCaptureService.COLOR_RGB, _targetRgb.value)
+            }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val serviceIntent = Intent(context, ScreenCaptureForgroundService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
             } else {
-                val serviceIntent = Intent(
-                    context,
-                    ScreenCaptureForgroundService::class.java
-                )
                 context.startService(serviceIntent)
             }
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                val serviceIntent = Intent(context, ScreenCaptureService::class.java).apply {
-                    putExtra(ScreenCaptureService.RESULT_CODE, mediaProjectionResultCode)
-                    putExtra(ScreenCaptureService.DATA, mediaProjectionResultData)
-                    putExtra(ScreenCaptureService.COLOR_RGB, _targetRgb.value)
-                }
-                context.startService(serviceIntent)
-            }, 500) // 100ms delay
+
             _isRecording.value = true
         }
     }
@@ -232,8 +224,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         val context = getApplication<Application>().applicationContext
         val serviceIntent = Intent(context, ScreenCaptureService::class.java)
         context.stopService(serviceIntent)
-        val serviceIntent1 = Intent(context, ScreenCaptureForgroundService::class.java)
-        context.stopService(serviceIntent1)
         _isRecording.value = false
         mediaProjectionResultCode == 0
         mediaProjectionResultData = null

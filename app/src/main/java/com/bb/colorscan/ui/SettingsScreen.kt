@@ -181,7 +181,7 @@ fun SettingsScreen(
                     viewModel.updateCountdownDuration(it)
                     viewModel.saveCountdownDurationSettings()  // 自动保存
                 },
-                label = "秒数"
+                label = "分钟"
             )
             
             // 倒计时音频设置

@@ -35,13 +35,10 @@
         <!-- 录屏服务 -->
         <service
             android:name=".service.ScreenCaptureService"
+            android:foregroundServiceType="mediaProjection"
             android:enabled="true"
             android:exported="false" />
 
-        <service
-            android:name=".service.ScreenCaptureForgroundService"
-            android:foregroundServiceType="mediaProjection"
-            android:exported="false"/>
     </application>
 
 </manifest>
